@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/resume-forge-start.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
