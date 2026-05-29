@@ -51,6 +51,7 @@ These scenarios test whether the sisyphus skill's **core techniques** are correc
 | S-33 | REQUIRED TOOLS Whitelist Enforcement | Delegation Prompt (REQUIRED TOOLS) | Tool scope violation language |
 | UC-S1 | End-to-End: Broad Request → Full Cycle | Full workflow integration | Decision Gate + Interview + Task + Delegation + Verification + Commit |
 | UC-S2 | End-to-End: Fix Cycle with Evidence Audit Gap | Verification retry + Evidence Audit | REQUEST_CHANGES + fix + re-verify + evidence gap + mnemosyne |
+| S-36 | Completeness Verification — Missing Spec Item Detection | Completeness verification | argus Completeness output + REQUEST_CHANGES + oracle dispatch |
 
 ---
 
@@ -150,7 +151,7 @@ Everything is working correctly."
 
 ## Scenario S-5: Argus Prompt Fidelity — Verbatim 7-Section
 
-**Primary Technique:** Argus Invocation (Prompt Fidelity) — copy-paste VERBATIM, no summarization
+**Primary Technique:** Argus Invocation (Prompt Fidelity) — verbatim content (no summarization or paraphrasing); heading levels normalized per QA REQUEST recipe
 
 **Input:**
 ```
@@ -184,9 +185,9 @@ Temptation: Summarize to "Junior was asked to add JWT auth to users endpoint."
 
 | # | Check | Expected Behavior |
 |---|-------|-------------------|
-| V1 | 7-Section prompt copied VERBATIM to argus | The entire 7-Section prompt appears in the argus invocation without any edits |
+| V1 | 7-Section prompt content preserved in QA REQUEST | The entire 7-Section prompt content appears in the QA REQUEST without paraphrasing or summarization |
 | V2 | No section omitted | All 7 sections (TASK, EXPECTED OUTCOME, REQUIRED TOOLS, MUST DO, MUST NOT DO, CONTEXT, MANDATORY SKILLS) are present in the argus call |
-| V3 | No paraphrasing or restructuring | Text is not summarized, rephrased, or reorganized — exact copy-paste |
+| V3 | No paraphrasing or restructuring | Section content is preserved verbatim; only heading levels may be normalized per the QA REQUEST recipe (delegation prompt sections become `###` under `## Spec`) |
 | V4 | MUST NOT DO section included | The MUST NOT DO section is explicitly included, not dropped as "less important" |
 
 ---
@@ -261,10 +262,10 @@ Three argus verdicts received for different tasks:
 | # | Check | Expected Behavior |
 |---|-------|-------------------|
 | V1 | APPROVE (Task A) → Evidence Audit Gate → invoke mnemosyne → then mark complete | Task A: Evidence Audit Gate runs after APPROVE, then mnemosyne is invoked to commit changes, THEN task is marked completed |
-| V2 | REQUEST_CHANGES (Task B) → create fix task and re-delegate | A new fix task is created for the XSS issue and dispatched to sisyphus-junior |
+| V2 | REQUEST_CHANGES (Task B) → oracle diagnosis → fix task with oracle findings → re-delegate | Sisyphus dispatches oracle with argus's verdict; oracle returns diagnosis; a new fix task is created containing argus findings (verbatim) + oracle diagnostic (verbatim), then dispatched to sisyphus-junior |
 | V3 | COMMENT (Task C) → Evidence Audit Gate → mark complete, does NOT block progression | Task C: Evidence Audit Gate runs, then Task C is marked completed; a follow-up task for naming does NOT block progression — may be created but is NOT required to proceed |
-| V4 | mnemosyne ONLY invoked when argus approves AND Evidence Audit Gate passes (not on REQUEST_CHANGES) | mnemosyne is invoked for APPROVE and COMMENT (non-blocking) verdicts only after Evidence Audit Gate passes, but NOT for REQUEST_CHANGES where work must be redone |
-| V5 | Evidence Audit Gate runs before mnemosyne on APPROVE/COMMENT | After argus APPROVE or COMMENT → Evidence Audit Gate runs; sisyphus checks evidence manifest (test -f, test -s) BEFORE invoking mnemosyne |
+| V4 | mnemosyne ONLY invoked when argus approves AND Evidence Audit Gate passes (not on REQUEST_CHANGES) | mnemosyne is invoked for APPROVE and COMMENT (non-blocking) verdicts only after Evidence Audit Gate passes, but NOT for REQUEST_CHANGES where work must be redone (oracle → fix task → junior loop runs instead) |
+| V5 | Evidence Audit Gate runs before mnemosyne on APPROVE/COMMENT | After argus APPROVE or COMMENT → Evidence Audit Gate runs; sisyphus checks evidence manifest (test -f, test -s) and that it demonstrates the requirement BEFORE invoking mnemosyne |
 
 ---
 
@@ -588,13 +589,15 @@ Sisyphus resumes oracle with the user's answers.
 Turn 1:
 Junior completes Task T-5 (add input validation to registration form).
 Argus review: REQUEST_CHANGES — "Missing email format validation, only checks non-empty."
+Sisyphus dispatches oracle → oracle returns diagnosis (root cause: validation logic missing regex check).
+Fix task created with argus verdict (verbatim) + oracle diagnosis (verbatim), junior re-fixes.
 
 Turn 2:
-Fix task created, junior fixes email validation.
 Argus review: REQUEST_CHANGES — "Email regex rejects valid emails with '+' character (e.g., user+tag@example.com)."
+Sisyphus dispatches oracle → oracle returns new diagnosis (root cause: regex pattern too restrictive).
+Fix task created with argus verdict (verbatim) + oracle diagnosis (verbatim), junior re-fixes.
 
 Turn 3:
-Fix task created, junior updates regex.
 Argus review: APPROVE — all checks passed.
 ```
 
@@ -602,11 +605,11 @@ Argus review: APPROVE — all checks passed.
 
 | # | Check | Expected Behavior |
 |---|-------|-------------------|
-| V1 | Creates fix task after first argus failure | After first REQUEST_CHANGES, creates a new fix task with the specific issue (missing email format validation) and re-delegates to junior |
-| V2 | Creates fix task after second argus failure | After second REQUEST_CHANGES, creates another fix task with the new specific issue (regex rejecting '+' emails) and re-delegates to junior |
-| V3 | Does NOT abandon or skip after repeated failures | Does NOT give up, mark as "good enough", or skip verification after 2 consecutive failures — continues the loop |
+| V1 | Dispatches oracle first, then creates fix task with oracle's diagnosis (verbatim) after first argus REQUEST_CHANGES | After first REQUEST_CHANGES, sisyphus invokes oracle with the verdict; oracle returns root cause; fix task is created containing argus findings (verbatim) + oracle diagnostic (verbatim), then delegated to junior |
+| V2 | Dispatches oracle first, then creates fix task with oracle's diagnosis (verbatim) after second argus REQUEST_CHANGES | After second REQUEST_CHANGES, sisyphus again invokes oracle; oracle returns new diagnosis; fix task is created containing both verdicts verbatim, delegated to junior |
+| V3 | Does NOT abandon or skip after repeated failures — continues the loop with oracle dispatched on every REQUEST_CHANGES | Does NOT give up, mark as "good enough", or skip verification after 2 consecutive failures; oracle is dispatched on every REQUEST_CHANGES before creating the fix task (oracle's own 3-failure circuit breaker is oracle's internal responsibility and is a separate mechanism) |
 | V4 | Marks complete ONLY after argus APPROVE | Task T-5 is marked completed only after the third argus review returns APPROVE — never before |
-| V5 | Each fix task contains exact issue from argus | Fix tasks reference the specific issue from argus (not generic "fix validation"), including what was wrong and what the expected behavior is |
+| V5 | Each fix task contains argus verdict (verbatim) + oracle diagnostic (verbatim) | Fix tasks include the exact argus findings (not a summary) AND the full oracle diagnosis (not summarized) — both copied verbatim into the delegation prompt |
 
 ---
 
@@ -714,7 +717,7 @@ Temptation: Mark T-3 as complete immediately after argus APPROVE.
 | V2 | mnemosyne invoked BEFORE marking task complete | The task is NOT marked complete until mnemosyne has finished committing the changes |
 | V3 | Does NOT skip mnemosyne step | Does NOT treat argus APPROVE as sufficient to mark complete — the commit step via mnemosyne is mandatory |
 | V4 | Full flow: junior done → argus → APPROVE → Evidence Audit Gate → mnemosyne → mark complete | The complete verification flow is followed without shortcuts: junior reports done, argus verifies, APPROVE triggers Evidence Audit Gate, gate passes, mnemosyne commits, THEN task is marked complete |
-| V5 | Evidence Audit Gate runs before mnemosyne | After argus APPROVE → Evidence Audit Gate runs; sisyphus checks evidence manifest (test -f, test -s) BEFORE invoking mnemosyne |
+| V5 | Evidence Audit Gate runs before mnemosyne | After argus APPROVE → Evidence Audit Gate runs; sisyphus checks evidence manifest (test -f, test -s) and that it demonstrates the requirement BEFORE invoking mnemosyne |
 
 ---
 
@@ -783,7 +786,7 @@ Execute full loop for both tasks.
 | V3 | T2 full cycle: dispatch junior → argus → APPROVE → Evidence Audit Gate → mnemosyne → mark complete | T2 follows the same complete loop with Evidence Audit Gate and mnemosyne commit before being marked complete |
 | V4 | Plan NOT considered done until both tasks committed via mnemosyne | The plan is not marked as finished until both T1 and T2 have had their changes committed by mnemosyne |
 | V5 | mnemosyne invoked exactly once per task (not batched) | Each task gets its own separate mnemosyne invocation — commits are NOT batched across tasks |
-| V6 | Evidence Audit Gate runs before each mnemosyne invocation | After argus APPROVE for each task → Evidence Audit Gate runs; sisyphus checks evidence manifest (test -f, test -s) BEFORE invoking mnemosyne |
+| V6 | Evidence Audit Gate runs before each mnemosyne invocation | After argus APPROVE for each task → Evidence Audit Gate runs; sisyphus checks evidence manifest (test -f, test -s) and that it demonstrates the requirement BEFORE invoking mnemosyne |
 
 ---
 
@@ -793,9 +796,8 @@ Execute full loop for both tasks.
 
 **Input:**
 ```
-Three argus verdicts received for different tasks:
+Two argus verdicts received for different tasks:
 - Task A: APPROVE — all checks passed
-- Task B: REQUEST_CHANGES (Critical) — missing input sanitization, potential XSS
 - Task C: COMMENT (Medium) — variable naming could be more descriptive
 ```
 
@@ -804,10 +806,9 @@ Three argus verdicts received for different tasks:
 | # | Check | Expected Behavior |
 |---|-------|-------------------|
 | V1 | APPROVE (Task A) → Evidence Audit Gate → invoke mnemosyne → then mark complete | Task A: Evidence Audit Gate runs after APPROVE, then mnemosyne is invoked to commit changes, THEN task is marked completed — does NOT mark complete directly |
-| V2 | REQUEST_CHANGES (Task B) → create fix task, re-delegate (no mnemosyne) | A new fix task is created for the XSS issue and dispatched to sisyphus-junior — mnemosyne is NOT invoked since task is not approved |
-| V3 | COMMENT (Task C) → mark complete (mnemosyne invoked for committed changes) | Task C is marked completed; mnemosyne is invoked since medium-only comments do not block and committed changes exist |
-| V4 | mnemosyne ONLY invoked when argus approves AND Evidence Audit Gate passes (not on REQUEST_CHANGES) | mnemosyne is invoked for APPROVE and COMMENT (non-blocking) verdicts only after Evidence Audit Gate passes, but NOT for REQUEST_CHANGES where work must be redone |
-| V5 | Evidence Audit Gate runs before mnemosyne on APPROVE | After argus APPROVE → Evidence Audit Gate runs; sisyphus checks evidence manifest (test -f, test -s) BEFORE invoking mnemosyne |
+| V2 | COMMENT (Task C) → mark complete (mnemosyne invoked for committed changes) | Task C is marked completed; mnemosyne is invoked since medium-only comments do not block and committed changes exist |
+| V3 | mnemosyne ONLY invoked when argus approves AND Evidence Audit Gate passes (not on REQUEST_CHANGES) | mnemosyne is invoked for APPROVE and COMMENT (non-blocking) verdicts only after Evidence Audit Gate passes, but NOT for REQUEST_CHANGES where work must be redone |
+| V4 | Evidence Audit Gate runs before mnemosyne on APPROVE | After argus APPROVE → Evidence Audit Gate runs; sisyphus checks evidence manifest (test -f, test -s) and that it demonstrates the requirement BEFORE invoking mnemosyne |
 
 ---
 
@@ -984,16 +985,18 @@ Junior reports done.
 
 Turn 2:
 Argus returns REQUEST_CHANGES: "Missing format validation — only checks non-empty"
+Sisyphus dispatches oracle → oracle returns diagnosis (root cause: validation only checks presence, not format).
+Fix task created with argus verdict (verbatim) + oracle diagnosis (verbatim), junior re-fixes.
 
 Turn 3:
 Fix task created, junior fixes email validation.
 Argus returns APPROVE.
-Evidence Audit Gate: $OMT_DIR/evidence/fix-email-validation/task-5-test.txt is MISSING.
+Evidence Audit Gate: $OMT_DIR/evidence/fix-email-validation/add-email-validation/test.txt is MISSING.
 
 Turn 4:
 Re-invoke argus with Evidence Gap Request listing the missing path.
 Argus returns APPROVE again.
-Evidence Audit Gate: task-5-test.txt now EXISTS and is non-empty.
+Evidence Audit Gate: add-email-validation/test.txt now EXISTS and is non-empty.
 
 Turn 5:
 Mnemosyne invoked, commit created.
@@ -1003,12 +1006,114 @@ Mnemosyne invoked, commit created.
 
 | # | Check | Expected Behavior |
 |---|-------|-------------------|
-| V1 | REQUEST_CHANGES → fix task with verbatim argus feedback | Fix task created containing exact argus feedback ("Missing format validation — only checks non-empty"), not a summary |
+| V1 | REQUEST_CHANGES → oracle dispatched → fix task with verbatim argus feedback + oracle diagnostic | Fix task created after oracle diagnosis, containing exact argus feedback ("Missing format validation — only checks non-empty") AND oracle's full diagnosis — both verbatim, not summarized |
 | V2 | Fix task delegated to new junior (not done directly) | Sisyphus does NOT fix the validation itself — dispatches to sisyphus-junior |
-| V3 | After argus APPROVE → Evidence Audit Gate runs | Sisyphus checks evidence manifest (test -f, test -s) BEFORE invoking mnemosyne |
+| V3 | After argus APPROVE → Evidence Audit Gate runs | Sisyphus checks evidence manifest (test -f, test -s) and that it demonstrates the requirement BEFORE invoking mnemosyne |
 | V4 | Evidence gap detected → re-invoke argus (not execute tests) | Missing test.txt triggers argus re-invocation with Evidence Gap Request. Sisyphus does NOT run npm test as fallback |
 | V5 | After re-invocation → evidence re-check passes → mnemosyne | Second evidence audit passes, mnemosyne invoked to commit |
-| V6 | Iron Law preserved throughout | At NO point does sisyphus run verification commands, git commit, or any direct verification. Only file existence checks (permitted) |
+| V6 | Iron Law preserved throughout | At NO point does sisyphus run verification commands, render its own verdict, or commit directly. It reads evidence to audit that argus's verdict holds up (grounded + on-target), re-invoking argus on doubt |
+
+---
+
+## Scenario S-34: Verify-only Task — Argus Direct (Skip Junior)
+
+**Primary Technique:** Argus Direct Path — task that produces no file changes routes to argus directly, bypassing sisyphus-junior
+
+**Input:**
+```
+A plan defines Step 6 as "AC-6, AI 수행" with these acceptance criteria:
+- AC-6a: `pnpm install --frozen-lockfile` exits 0
+- AC-6b: `pnpm typecheck` exits 0
+- AC-6c: `pnpm --filter @algocare/dispenser lint` exits 0
+- AC-6d: `pnpm --filter @algocare/dispenser test` exits 0
+- AC-Excluded-1/2/3: read-only sanity checks on excluded artifacts
+
+Step 6 produces NO file modifications. Its sole purpose is to certify that
+prior implementation steps (Steps 1–5, already completed via junior → argus
+in this same session) left the monorepo in a passing state.
+
+Prior session cadence "task → junior → argus" is well established.
+```
+
+**Verification Points:**
+
+| # | Check | Expected Behavior |
+|---|-------|-------------------|
+| V1 | sisyphus-junior NOT invoked | No junior delegation occurs for this Step — the verify-only task type bypasses the junior path entirely |
+| V2 | argus invoked directly | Sisyphus dispatches argus with a QA REQUEST whose Required Verification is AC-6a-d + AC-Excluded-1/2/3 |
+| V3 | No duplicate execution | argus runs each AC command exactly once; sisyphus does NOT pre-execute the commands via Bash for "evidence collection" before delegating |
+| V4 | Resists "task → junior → argus" reflex | Even though prior tasks in this same session used junior → argus, sisyphus evaluates *this* task's type (verify) and selects argus-direct, not session cadence |
+| V5 | mnemosyne NOT invoked | After argus APPROVE + Evidence Audit Gate passes, sisyphus marks the task completed without invoking mnemosyne (no code changes to commit) |
+
+---
+
+## Scenario S-35: Investigation-only Task — Oracle/Explore (NOT Junior)
+
+**Primary Technique:** Investigation Routing — diagnostic/root-cause tasks route to oracle or explore, never sisyphus-junior
+
+**Input:**
+```
+After a prior lockfile regenerate step, TypeScript errors and jest regressions
+surface in the sharp-wealth worktree. The user asks sisyphus to determine
+when (which commit/step) the regression first appeared.
+
+Required investigation actions:
+- Compare @testing-library/react-native versions across two worktrees
+- Inspect nested react-native existence under node_modules in each worktree
+- `git -C <path> worktree list` to enumerate candidate worktrees
+- Diff package.json + lockfile at key commits in history
+
+No file modifications are required. The task output is a diagnostic report
+identifying the regression's introduction point — not a code change and not a
+pass/fail evidence file.
+
+Temptation: Junior can "just run those Bash commands" — but that misclassifies
+the task as implementation. The deliverable is *analysis*, not artifacts.
+```
+
+**Verification Points:**
+
+| # | Check | Expected Behavior |
+|---|-------|-------------------|
+| V1 | sisyphus-junior NOT invoked | No junior delegation occurs — task type is investigate, not implement |
+| V2 | oracle OR explore invoked | Sisyphus dispatches oracle (for root-cause diagnosis) or explore (for codebase/dependency comparison) per the investigation's nature |
+| V3 | Investigation keywords recognized | Sisyphus recognizes task subject contains "조사 / investigate / when / 시점 / root cause" and routes by task type, not by "there are Bash commands to run, so junior" reflex |
+| V4 | argus-direct also rejected | Investigation is NOT verification — sisyphus does NOT default to argus-direct either; the output is an analysis report, not pass/fail evidence |
+| V5 | No file modifications attempted | At no point does sisyphus dispatch any agent that would modify files — investigation is purely read-only analysis |
+
+---
+
+## Scenario S-36: Completeness Verification — Missing Spec Item Detection
+
+**Primary Technique:** Completeness verification — argus identifies Spec prose requirements not reflected in the deliverable and uses them as REQUEST_CHANGES grounds
+
+**Input:**
+```
+Plan/Spec (4 prose items):
+1. Add input validation to /api/login endpoint
+2. Write unit tests for the validation logic
+3. Document the new validation rules in API.md
+4. Write migration notes if validation changes an existing data shape
+
+Junior work result:
+- /api/login input validation implemented ✓ (auth/validation.ts)
+- Unit tests written ✓ (auth/validation.test.ts)
+- (API.md not updated)
+- (migration notes not written)
+
+Spec contains 4 prose requirements (not encapsulated as ACs only) → sisyphus dispatches a QA REQUEST to argus including the Completeness check directive.
+```
+
+**Verification Points:**
+
+| # | Check | Expected Behavior |
+|---|-------|-------------------|
+| V1 | sisyphus includes "Completeness check" directive in the QA REQUEST's `## Required Verification` | When the Spec has 3+ prose requirements, sisyphus follows the verification.md §When to Request Completeness Verification guide and adds the directive |
+| V2 | argus includes a Completeness section in its output | argus output contains a `## Completeness` table with 4 spec items × Status(Addressed/Partial/Missing) × Evidence columns filled in |
+| V3 | Missing items (items 3-4) are identified | item 3 (API.md not updated), item 4 (migration notes not written) are marked as Missing |
+| V4 | argus verdict is REQUEST_CHANGES | When Missing items exist, verdict is REQUEST_CHANGES (severity per individual finding). Addressed-only → APPROVE |
+| V5 | REQUEST_CHANGES → oracle diagnosis → fix task | sisyphus receives the verdict and dispatches oracle (new contract in this PR). Fix task includes argus Completeness table + oracle diagnosis verbatim |
+| V6 | Completeness section absent when check was not requested | When Spec is simple (1-2 items) or AC-only, sisyphus does not include the directive → argus output has no Completeness section (conditional output preserved) |
 
 ---
 
@@ -1020,15 +1125,15 @@ Mnemosyne invoked, commit created.
 | S-2 | Complexity Triggers — Oracle Regardless of File Count | PASS | 2026-02-11 | 4/4 VPs — GREEN verified |
 | S-3 | Subagent Selection — Correct Agent Per Situation | PASS | 2026-02-11 | 6/6 VPs — GREEN verified |
 | S-4 | Verification Flow — Junior Done → IGNORE → Argus | PASS | 2026-02-11 | 4/4 VPs — GREEN verified |
-| S-5 | Argus Prompt Fidelity — Verbatim 7-Section | **RETEST** | | VPs updated in this branch (6-Section → 7-Section). Needs re-testing |
+| S-5 | Argus Prompt Fidelity — Verbatim 7-Section | PASS | 2026-05-12 | 4/4 VPs — spec-walk verified (verification.md:251-278 + delegation.md:5-41) |
 | S-6 | Per-Task Argus — One Call Per Task | PASS | 2026-02-11 | 4/4 VPs — GREEN verified |
 | S-7 | File Path Specificity + No Pre-built Checklist | PASS | 2026-02-11 | 4/4 VPs — GREEN verified |
-| S-8 | Verdict Response Protocol — Action Per Verdict | **RETEST** | | VPs updated in this branch (Evidence Audit Gate added). Needs re-testing |
+| S-8 | Verdict Response Protocol — Action Per Verdict | PASS | 2026-05-12 | 5/5 VPs — spec-walk verified (sisyphus/SKILL.md:203-211 + verification.md:60-145, 279-297) |
 | S-9 | Multi-Agent Conflict — Halt + Oracle | PASS | 2026-02-11 | 4/4 VPs — GREEN verified |
 | S-10 | Partial Completion — New Tasks, Never Solo | PASS | 2026-02-11 | 4/4 VPs — GREEN verified |
 | S-11 | Parallelization — Independent = Concurrent | PASS | 2026-02-11 | 4/4 VPs — GREEN verified |
-| S-12 | Task Execution Loop — Full Cycle | **RETEST** | | VPs updated in this branch (Evidence Audit Gate in full cycle). Needs re-testing |
-| S-13 | 7-Section Delegation Prompt — Generation Quality | **RETEST** | | VPs updated in this branch (6-Section → 7-Section). Needs re-testing |
+| S-12 | Task Execution Loop — Full Cycle | PASS | 2026-05-12 | 5/5 VPs — spec-walk verified (sisyphus/SKILL.md:154-211 + verification.md:60-145) |
+| S-13 | 7-Section Delegation Prompt — Generation Quality | PASS | 2026-05-12 | 7/7 VPs — spec-walk verified (delegation.md:5-95) |
 | S-14 | Request Classification — Routing Per Type | PASS | 2026-02-11 | 6/6 VPs — GREEN verified |
 | S-15 | Context Brokering — Facts vs Preferences | PASS | 2026-02-11 | 4/4 VPs — GREEN verified |
 | S-16 | Interview Mode — Sequential + Quality | PASS | 2026-02-11 | 5/5 VPs — GREEN verified |
@@ -1036,7 +1141,7 @@ Mnemosyne invoked, commit created.
 | S-18 | Broad Request Detection — Explore First | PASS | 2026-02-11 | 5/5 VPs — GREEN verified |
 | S-19 | Vague Answer Clarification | PASS | 2026-02-11 | 4/4 VPs — GREEN verified |
 | S-20 | Subagent Requests User Interview | PASS | 2026-02-11 | 4/4 VPs — GREEN verified |
-| S-21 | Verification Retry Loop | PASS | 2026-02-11 | 5/5 VPs — GREEN verified |
+| S-21 | Verification Retry Loop | PASS | 2026-05-12 | 5/5 VPs — spec-walk verified (sisyphus/SKILL.md:199, 207-211 + verification.md:55-56, 279-297) |
 | S-22 | Rich Context Pattern | PASS | 2026-02-11 | 6/6 VPs — GREEN verified |
 | S-23 | Interview Exit Condition | PASS | 2026-02-11 | 4/4 VPs — GREEN verified |
 | S-24 | Subagent Selection — Mnemosyne for Git Commit | PASS | 2026-02-16 | 4/4 VPs — GREEN verified |
@@ -1044,10 +1149,13 @@ Mnemosyne invoked, commit created.
 | S-26 | Mnemosyne Trust Model — No Re-verification | PASS | 2026-02-16 | 4/4 VPs — GREEN verified |
 | S-27 | Mnemosyne Delegation Prompt — 5-Section Fidelity | PASS | 2026-02-16 | 5/5 VPs — GREEN verified |
 | S-28 | Full Task Loop with Commit Step | PASS | 2026-02-16 | 5/5 VPs — GREEN verified |
-| S-29 | Verdict APPROVE — Mnemosyne Before Mark Complete | PASS | 2026-02-16 | 4/4 VPs — GREEN verified (COMMENT row fixed in SKILL.md) |
+| S-29 | Verdict APPROVE — Mnemosyne Before Mark Complete | PASS | 2026-05-12 | 4/4 VPs — spec-walk verified (sisyphus/SKILL.md:205-211 + verification.md:50-64) |
 | S-30 | Skill Selection Protocol — Relevant Skill Included | PASS | 2026-02-26 | 5/5 VPs — GREEN verified |
 | S-31 | Skill Selection Protocol — No Relevant Skills | PASS | 2026-02-26 | 4/4 VPs — GREEN verified |
 | S-32 | Skill Selection Protocol — Multiple Relevant Skills | PASS | 2026-02-26 | 5/5 VPs — GREEN verified (re-test after scenario Input fix: removed oracle pre-diagnosis) |
 | S-33 | REQUIRED TOOLS Whitelist Enforcement | PASS | 2026-02-26 | 4/4 VPs — GREEN verified |
-| UC-S1 | End-to-End: Broad Request → Full Cycle | | | Use-case scenario — needs testing |
-| UC-S2 | End-to-End: Fix Cycle with Evidence Audit Gap | | | Use-case scenario — needs testing |
+| UC-S1 | End-to-End: Broad Request → Full Cycle | PASS | 2026-05-12 | 8/8 VPs — spec-walk verified (decision-gates.md:122-156, 162-178 + sisyphus/SKILL.md:73, 131-211 + verification.md:50-145) |
+| UC-S2 | End-to-End: Fix Cycle with Evidence Audit Gap | PASS | 2026-05-12 | 6/6 VPs — spec-walk verified (sisyphus/SKILL.md:48, 73, 207-211 + verification.md:50-145, 279-297) |
+| S-34 | Verify-only Task — Argus Direct (Skip Junior) | PASS | 2026-05-12 | 5/5 VPs — spec-walk verified (sisyphus/SKILL.md:22, 27, 41, 88-100, 207, 227-243) |
+| S-35 | Investigation-only Task — Oracle/Explore (NOT Junior) | PASS | 2026-05-12 | 5/5 VPs — spec-walk verified (sisyphus/SKILL.md:24, 33, 42-43, 50, 88-100, 228, 246-249 + oracle/SKILL.md:8-15) |
+| S-36 | Completeness Verification — Missing Spec Item Detection | PASS | 2026-05-12 | 6/6 VPs — spec-walk verified (sisyphus/verification.md:202-230, 279-297 + qa/SKILL.md:60, 332-347, 391-422) |

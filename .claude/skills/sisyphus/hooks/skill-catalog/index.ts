@@ -1,16 +1,6 @@
-import { ParsedInput, HookInput, HookOutput } from './types.ts';
+import { ParsedInput, HookInput } from './types.ts';
 import { buildCatalog, formatCatalog } from './catalog.ts';
 import { scanSkillDirectories, readEnabledPlugins } from './scanner.ts';
-
-export async function readStdin(): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let data = '';
-    process.stdin.setEncoding('utf8');
-    process.stdin.on('data', (chunk) => { data += chunk; });
-    process.stdin.on('end', () => resolve(data));
-    process.stdin.on('error', (err) => reject(err));
-  });
-}
 
 export function parseInput(raw: string): ParsedInput {
   let input: HookInput = {};
@@ -29,8 +19,7 @@ export function parseInput(raw: string): ParsedInput {
 
 export async function main(): Promise<void> {
   try {
-    const rawInput = await readStdin();
-    const input = parseInput(rawInput);
+    const input = parseInput('{}');
 
     // Read enabled plugins from user settings
     const enabledPlugins = readEnabledPlugins();
@@ -44,19 +33,10 @@ export async function main(): Promise<void> {
     // Format catalog text
     const additionalContext = formatCatalog(entries);
 
-    // Output JSON
-    const output: HookOutput = {
-      continue: true,
-      hookSpecificOutput: {
-        hookEventName: input.hookEventName,
-        additionalContext,
-      },
-    };
-
-    console.log(JSON.stringify(output));
+    console.log(additionalContext);
   } catch {
     // Fail open on any error
-    console.log('{"continue": true}');
+    console.log(formatCatalog([]));
   }
 }
 

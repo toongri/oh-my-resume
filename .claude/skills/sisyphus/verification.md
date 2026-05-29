@@ -18,18 +18,20 @@ digraph verification_flow {
     "still gap?" [shape=diamond];
     "retries < 3?" [shape=diamond];
     "interview user" [shape=box, style=filled, fillcolor=purple, fontcolor=white];
+    "Oracle diagnosis" [shape=box, style=filled, fillcolor=purple, fontcolor=white];
     "mnemosyne" [shape=box, style=filled, fillcolor=blue, fontcolor=white];
     "complete" [shape=box, style=filled, fillcolor=green];
     "fix + retry" [shape=box];
 
     "junior done" -> "IGNORE" -> "argus" -> "verdict?";
-    "verdict?" -> "fix + retry" [label="REQUEST_CHANGES"];
+    "verdict?" -> "Oracle diagnosis" [label="REQUEST_CHANGES"];
+    "Oracle diagnosis" -> "fix + retry";
     "verdict?" -> "evidence audit" [label="APPROVE/COMMENT"];
     "evidence audit" -> "evidence OK?";
     "evidence OK?" -> "mnemosyne" [label="yes"];
     "evidence OK?" -> "re-invoke argus" [label="no (gap)"];
     "re-invoke argus" -> "new verdict?";
-    "new verdict?" -> "fix + retry" [label="REQUEST_CHANGES"];
+    "new verdict?" -> "Oracle diagnosis" [label="REQUEST_CHANGES"];
     "new verdict?" -> "still gap?" [label="APPROVE/COMMENT"];
     "still gap?" -> "mnemosyne" [label="no"];
     "still gap?" -> "retries < 3?" [label="yes"];
@@ -50,7 +52,7 @@ digraph verification_flow {
 3. If APPROVE/COMMENT → **Run Evidence Audit Gate** before proceeding
 4. If evidence gap → re-invoke argus (up to 3x; interview user if exhausted)
 5. If evidence OK → **Invoke mnemosyne** to commit
-6. If REQUEST_CHANGES → Create fix task, re-delegate to sisyphus-junior
+6. If REQUEST_CHANGES → oracle diagnosis → fix task including oracle findings → re-delegate to sisyphus-junior
 7. **No retry limit on fix cycle** — Continue until argus passes
 
 ---
@@ -81,25 +83,27 @@ Manifest source depends on the mode in the table below. When manifest is empty (
 
 ### Audit Procedure
 
-A path passes if the file **exists and is non-empty** (`test -f "$path" && test -s "$path"`).
+A path passes when the file **exists and is non-empty** AND the evidence **actually demonstrates the requirement was satisfied** — not merely that a file is present. Beyond the existence check (`test -f "$path" && test -s "$path"`), read the evidence and confirm it proves what THIS task required (the right target/behavior, a real result), not something adjacent.
 
-| Check Type | Command | Purpose |
+| Check Type | Command / Action | Purpose |
 |------------|---------|---------|
 | PERMITTED | `test -f "$path"` | File exists |
 | PERMITTED | `test -s "$path"` | File non-empty |
 | PERMITTED | `ls` on evidence directory | Directory listing (metadata only) |
-| FORBIDDEN | `npm test`, `curl`, `grep` for code verification | Any verification command execution |
+| PERMITTED | **Read the evidence file to judge whether it proves the requirement** | Auditing whether argus's verdict holds up — reading, not verifying |
+| FORBIDDEN | `npm test`, `curl`, `grep` for code verification | Re-executing / independently running a verification |
+| FORBIDDEN | Rendering your own pass/fail, or failing the task yourself | The verdict is argus's; on doubt → re-invoke argus |
 
-**RULE**: Evidence Audit is NOT verification — it's orchestration metadata inspection. The Iron Law is preserved. Sisyphus inspects whether argus produced artifacts; it does not re-run the verification commands argus ran.
+**RULE**: Evidence Audit confirms argus's verdict **holds up** — that the evidence is real and demonstrates the requirement, not just that a file exists. Reading the evidence to make that judgment is **auditing, NOT verifying**: you never re-run a command, and you never render your own verdict. The Iron Law is preserved — argus owns "does it pass?", you own "does argus's verdict hold up?". If the evidence is missing, or does not demonstrate the requirement, it is an Evidence Gap → re-invoke argus.
 
 ### Evidence Gap Handling
 
 | Retry | Condition | Action |
 |-------|-----------|--------|
-| Every retry | New verdict = REQUEST_CHANGES | Create fix task immediately (no evidence check needed) |
-| 0 (initial) | APPROVE/COMMENT + evidence MISSING | Re-invoke argus with Evidence Gap Request listing missing paths |
-| 1-2 | APPROVE/COMMENT + evidence STILL MISSING | Re-invoke argus again |
-| 3 (exhausted) | APPROVE/COMMENT + evidence STILL MISSING | Interview user: explain situation + AskUserQuestion for strategy selection |
+| Every retry | New verdict = REQUEST_CHANGES | oracle diagnosis → fix task (no evidence check needed) |
+| 0 (initial) | APPROVE/COMMENT + evidence MISSING or does not demonstrate the requirement | Re-invoke argus with Evidence Gap Request describing the gap |
+| 1-2 | APPROVE/COMMENT + gap STILL present | Re-invoke argus again |
+| 3 (exhausted) | APPROVE/COMMENT + gap STILL present | Interview user: explain situation + AskUserQuestion for strategy selection |
 
 **Evidence Gap Request format:**
 
@@ -110,7 +114,7 @@ A path passes if the file **exists and is non-empty** (`test -f "$path" && test 
 [Paste the original QA REQUEST verbatim]
 
 ## Missing Evidence
-- [ ] $OMT_DIR/evidence/{work-slug}/task-{N}-build.txt — file not found or empty
+- [ ] $OMT_DIR/evidence/{work-slug}/{task-slug}/build.txt — file not found or empty
 - [ ] [additional missing paths]
 
 ## Action Required
@@ -120,11 +124,11 @@ Save outputs to the exact paths listed above.
 
 **Full protocol**:
 
-1. If ALL manifest paths are PRESENT → proceed to Verdict Response Protocol
-2. If ANY manifest paths are MISSING → Evidence Gap detected:
-   - Re-invoke argus with an Evidence Gap Request (format above) listing the missing paths
+1. If ALL manifest paths are PRESENT and the evidence demonstrates the requirement → proceed to Verdict Response Protocol
+2. If ANY manifest path is MISSING or fails to demonstrate the requirement → Evidence Gap detected:
+   - Re-invoke argus with an Evidence Gap Request (format above) describing the gap
    - After re-invocation, evaluate the **new verdict first**:
-     - If REQUEST_CHANGES → treat as REQUEST_CHANGES (create fix task). Evidence gap is moot.
+     - If REQUEST_CHANGES → treat as REQUEST_CHANGES (oracle diagnosis → fix task). Evidence gap is moot.
      - If APPROVE/COMMENT → check manifest again
    - If evidence STILL missing → retry (up to 3 total re-invocations)
    - After 3 retries with persistent gap → **Interview user**: summarize the situation and ask via AskUserQuestion what strategy to take
@@ -195,16 +199,48 @@ Results from oracle, explore, and librarian are:
 - Summary: [what the implementer claimed]
 ```
 
+### When to Request Completeness Verification
+
+Include a "Completeness check" directive in the QA REQUEST's `## Required Verification` section when:
+
+| Condition | Reason |
+|-----------|--------|
+| Spec contains 3 or more prose requirements (items not encapsulated as ACs) | Prose-only spec items are not automatically verified by AC checks — explicit completeness verification is required |
+| Task originated from a broad request (decision-gates.md §Broad Requests) | Broad requests carry higher risk of missing deliverables |
+| User explicitly requests *coverage* (e.g., "everything covered" or "전체 반영") | User intent is completeness assurance |
+
+> **Note on Korean keyword above**: `"전체 반영"` is a user-input trigger phrase preserved intentionally — sisyphus matches this exact Korean string when users request full coverage in Korean. Do not translate it.
+
+#### QA REQUEST Example (with Completeness)
+
+```
+# QA REQUEST
+
+## Spec
+- 1. Add input validation to /api/login endpoint
+- 2. Write unit tests for the validation logic
+- 3. Document the new validation rules in API.md
+- 4. Write migration notes if validation changes an existing data shape
+
+## Required Verification
+- AC-1: `npm test` exits 0
+- AC-2: `eslint .` exits 0
+- Completeness check: Verify all 4 Spec items are reflected in the deliverable
+
+## Scope
+- Changed files: ...
+```
+
 ### Evidence Path Fallback (Common Rule)
 
 Applies to all Recipes. When composing a QA REQUEST, sisyphus generates evidence paths using the work-unit slug:
 
 ```
-$OMT_DIR/evidence/{work-slug}/task-{N}-{check-slug}.{ext}
+$OMT_DIR/evidence/{work-slug}/{task-slug}/{check-slug}.{ext}
 ```
 
 - `{work-slug}`: URL-safe slug generated by sisyphus when creating the task list (see SKILL.md Task Planning)
-- `{N}`: task number from the task list
+- `{task-slug}`: short URL-safe slug derived from the TaskCreate subject (e.g., "Add chaining template" → `chaining-template`). Declared once per task at TaskCreate time and reused for the task's lifetime. Argus saves to the path declared in Tier 1 verbatim — never renumbers or re-derives the slug.
 - `{check-slug}`: URL-safe slug derived from the verification description
 - `{ext}`: `.txt` for CLI/test output, `.json` for API responses, `.png` for screenshots
 
@@ -218,18 +254,18 @@ Ensure the target directory exists (`mkdir -p`) before saving evidence files.
 - `## Spec` ← full 7-Section delegation prompt content (each section becomes `###` heading)
 - `## Required Verification` ← EXPECTED OUTCOME verification + MUST DO assertions
 - `## Scope` ← changed files + implementer's summary
-- Evidence paths: Include `$OMT_DIR/evidence/{work-slug}/task-{N}-{check-slug}.{ext}` paths in `## Required Verification` (Tier 1)
+- Evidence paths: Include `$OMT_DIR/evidence/{work-slug}/{task-slug}/{check-slug}.{ext}` paths in `## Required Verification` (Tier 1)
 
 **Recipe 2: After task completion (plan-based)**
-- `## Spec` ← plan TODO의 spec content (What to do, Must NOT do, AC, QA Scenarios)
-- `## Required Verification` ← TODO의 QA Scenarios + Acceptance Criteria
+- `## Spec` ← plan TODO's spec content (What to do, Must NOT do, AC, QA Scenarios)
+- `## Required Verification` ← TODO's QA Scenarios + Acceptance Criteria
 - `## Scope` ← changed files + implementer's summary
-- Evidence paths: Plan TODO's Evidence field. If absent, use `$OMT_DIR/evidence/{work-slug}/task-{N}-{check-slug}.{ext}` (Tier 1)
+- Evidence paths: Plan TODO's Evidence field. If absent, use `$OMT_DIR/evidence/{work-slug}/{task-slug}/{check-slug}.{ext}` (Tier 1)
 
 **Recipe 3: AC/QA Scenario verification with explicit methods**
 - `## Spec` ← acceptance criteria + QA scenarios verbatim
 - `## Required Verification` ← QA scenarios verbatim (they ARE the required verification)
-- Evidence paths: QA scenarios' Evidence field. If absent, use `$OMT_DIR/evidence/{work-slug}/task-{N}-{check-slug}.{ext}` (Tier 1)
+- Evidence paths: QA scenarios' Evidence field. If absent, use `$OMT_DIR/evidence/{work-slug}/{task-slug}/{check-slug}.{ext}` (Tier 1)
 
 After composing any recipe, the evidence paths included in `## Required Verification` become the expected manifest for Evidence Audit Gate (manifest source depends on the mode defined in the Evidence Audit Gate section above).
 
@@ -244,6 +280,12 @@ After composing any recipe, the evidence paths included in `## Required Verifica
 
 ### Fix Task from REQUEST_CHANGES
 
+When argus returns REQUEST_CHANGES, sisyphus MUST route through oracle before creating a fix task:
+
+1. **Invoke oracle** — forward argus's REQUEST_CHANGES verdict + changed files as a diagnosis request.
+2. **Receive oracle findings** — root cause, recommended fix direction, file:line citations.
+3. **Create fix task** — include oracle findings verbatim in the delegation prompt.
+
 ```markdown
 Subject: Fix [issue type]: [brief description]
 Description:
@@ -251,5 +293,7 @@ Description:
 - Location: [file:lines]
 - Required fix: [specific action]
 - Argus findings (verbatim):
-  > [argus의 원문 피드백 전체 — 요약하지 말 것]
+  > [Full argus feedback verbatim — do not summarize]
+- Oracle diagnosis (verbatim):
+  > [Full oracle diagnosis and recommendations — do not summarize]
 ```
