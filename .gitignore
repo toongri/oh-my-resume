@@ -20,3 +20,6 @@ dist/
 
 # Generated files
 resume.pdf
+
+# Serena MCP tool state
+.serena/
