@@ -23,6 +23,7 @@ Analyze code changes and generate Korean commit messages following project conve
 NO COMMIT WITHOUT:
 1. Single logical change (or properly split)
 2. Message ≤ 50 characters
+3. Subject comprehensible to git log readers without external context
 ```
 
 **Violating the letter of these rules IS violating the spirit.**
@@ -293,6 +294,25 @@ COMMIT 2: type: 제목
 
 ### Step 5: Generate Commit Message
 
+#### MANDATORY Self-Check (제목 초안 작성 직후)
+
+제목을 쓴 직후, 커밋 실행 전 반드시 다음 정규식 패턴을 자가 검사한다. **하나라도 매칭되면 rewrite 후 재검사.**
+
+```
+1. /\(?Step \d+(\.\d+)?\)?/        # Plan 단계 번호 — (Step 7), Step 7.6
+2. /AC [A-Z]\d+\b/                  # Acceptance criteria ID — AC M1, AC H4
+3. /\b[HMLBCDJ]\d+\b(?! \w)/        # 단독 AC 코드 — H4, M1, D5
+4. /Phase \d+|Round \d+|Iteration \d+/  # 기타 단계 라벨
+5. /\bP[0-3]\b(?! \w)/              # 단독 priority 라벨 — P0, P1
+```
+
+**왜 강제인가**: 작업자 본인은 plan 문서를 보고 있으니 `Step 7.6`이 명확하지만, git log 독자는 그 plan에 접근 불가. 이번 절차의 reference implementation은 24h 내 실제 발생한 8건 위반(`(Step 3)` ~ `(Step 12)`, `(AC M1)`, `(AC M3)`)을 history rewrite로 교정해야 했던 사례.
+
+**위반 패턴 발견 시 변환:**
+- 토큰 단순 제거: `(Step 12)` → 삭제 (제목이 도메인 용어로 이미 자족적인 경우)
+- 토큰 → 도메인 용어로 치환: `align RN tooling lockstep with mobile (Step 4)` → `RN tooling mobile에 정렬`
+- 추적성이 정말 필요하면 body의 trailer로 이동: `Refs: dispenser-monorepo-absorption.md#step-12`
+
 **Subject rules (NON-NEGOTIABLE):**
 - Korean (한국어)
 - **Max 50 characters** ← ENFORCED, not a guideline
@@ -300,9 +320,49 @@ COMMIT 2: type: 제목
 - No period at end
 
 **Subject content rule:**
-- 제목은 **변경 자체**를 기술 (Product, Not Process)
-- BAD: `fix: 코드 리뷰 P1/P2 이슈 수정` — 프로세스를 기술
-- GOOD: `fix: persistence 저장 시점을 Step 완료 단위로 변경` — 변경을 기술
+
+제목의 독자는 미래의 git log 독자다 — 6개월 뒤 또는 다른 개발자가 코드 archaeology 중에 만나는 줄. 제목은 그 독자가 외부 맥락 없이 무엇이 바뀌었는지 이해할 수 있어야 한다.
+
+**독자 모델:**
+
+| 독자가 가진 것 | 독자가 갖지 못한 것 |
+|---|---|
+| 코드베이스 자체 | PR description, review thread |
+| commit body / diff | 작업 세션의 맥락 |
+| 도메인 지식 | 내부 분류 체계 (P-등급, 심각도 라벨) |
+| 다른 commit들의 history | 회의록, Slack 메시지 |
+
+**검증 질문** — 제목을 쓴 후 자문:
+1. "독자가 이 제목만 보고 무엇이 바뀌었는지 이해하는가?"
+2. "독자가 외부 문서/세션 맥락에 접근해야만 의미를 알 수 있는가?"
+
+1번이 NO 또는 2번이 YES면 → rewrite.
+
+**자주 실패하는 패턴** (외부 맥락에 의존):
+
+| 패턴 | 왜 실패하는가 |
+|---|---|
+| 리뷰 분류 (`P0`/`P1`/`HIGH`/`CRITICAL` 등) | 독자는 그 분류 체계의 정의에 접근 불가 |
+| 워크플로우 라벨 (`잔여`/`residual`/`follow-up`) | 무엇의 잔여인지 세션 맥락 필요 |
+| 프로세스 참조 (`리뷰`/`audit`/`라운드`) | 어떤 리뷰/audit인지 외부 문서 필요 |
+| 모호한 카운트 (`3건`/`여러 건` 단독) | 무엇이 3건인지 본문 없이 불명 |
+| Plan 단계 번호 (`Step N`/`Step 7.6`/`Phase N`/`Round N`) | 어떤 plan의 N단계인지 외부 plan 문서 필요 |
+| Acceptance criteria ID (`AC M1`/`H4`/`(M3)`) | AC 정의가 plan/spec 외부에 있어 독자 접근 불가 |
+
+이들은 작업 중인 본인에게는 명확하지만 git log 독자에게는 의미 없다. 출처/분류/카운트가 필요하면 body 또는 trailer로 — 제목은 변경 자체를 도메인 용어로 기술.
+
+**BAD vs GOOD subjects** (실제 사례):
+
+| BAD (외부 맥락 의존) | GOOD (자족적, 도메인 용어) |
+|---|---|
+| `fix: collect-jd P1 스펙 드리프트 3건 정합` | `fix: ledger filename + canonical path + Gate 5 classification 정합` |
+| `refactor: SKILL.md HIGH 잔여 3섹션 cross-ref 전환` | `refactor: SKILL.md Session Lock + Atomic Write + L1/L2 cross-ref 전환` |
+| `fix: 코드 리뷰 P1/P2 이슈 수정` | `fix: persistence 저장 시점을 Step 완료 단위로 변경` |
+| `feat(dispenser): metro 모노레포 설정 + RN 패키지 고정 (Step 7)` | `feat(dispenser): metro 모노레포 설정 + RN 패키지 고정` |
+| `chore(monorepo): dispenser 워크스페이스 lockfile 재생성 (Step 7.6)` | `chore(monorepo): dispenser 워크스페이스 lockfile 재생성` |
+| `chore(dispenser): remove per-app husky (AC M1)` | `chore(dispenser): per-app husky 제거` |
+
+GOOD 제목들은 외부 문서 없이도 변경 영역(파일/모듈/도메인 개념)이 직접 보인다.
 
 **If subject > 50 chars:**
 1. Identify the ONE core change
@@ -407,6 +467,8 @@ See `examples.md` for commit message examples.
 | Committing plan.md | Workflow files mixed in | git reset HEAD plan.md |
 | Meta-commit: "리뷰 이슈 수정" | 변경 내용이 불투명, git log 무의미 | 실제 변경 기술: "저장 시점을 Step 완료 단위로 변경" |
 | Opaque reference: "P1-1, P2-3 반영" | 외부 문서 없이 해독 불가 | 참조는 body/trailer, 제목은 변경 자체 |
+| 외부 맥락에 의존하는 제목 (`P1 X`, `HIGH 잔여 Y`, `리뷰 N건`) | git log 독자는 분류 체계/세션 맥락에 접근 불가 — 의미 전달 실패 | 도메인 용어로 변경 자체를 기술; 분류/맥락은 body·trailer로 |
+| Plan-step / AC ID 박기: `(Step N)` `(AC M1)` `(Phase 2)` | plan 문서 없으면 git log 독자 해독 불가 — 작업자 본인 외에 의미 없는 토큰 | Step 5 MANDATORY Self-Check의 정규식 5종으로 자동 검사; 추적은 PR description 또는 trailer (`Refs: plan.md#step-N`) |
 
 ---
 
